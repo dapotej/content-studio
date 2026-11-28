@@ -52,8 +52,11 @@ connected accounts and publishes at the scheduled time (so the app needs no sche
 - **Plans** (`src/lib/plans.ts`): 14-day trial, Starter, Growth, Agency, plus an unlimited internal plan. Posts and AI
   videos per month and brands per workspace are enforced in `src/lib/limits.ts`.
 - **Payments** (`src/lib/payments.ts`), each off until its keys are set:
-  - Stripe (USD, cards): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER|GROWTH|AGENCY`;
-    webhook URL `/api/public/billing/stripe` (events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`).
+  - Stripe (USD, cards): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER|GROWTH|AGENCY`, and
+    `STRIPE_PORTAL_CONFIG` (the Customer Portal configuration: plan switching, card updates, invoices, cancel at
+    period end). Hosted Checkout in subscription mode, one Stripe customer per workspace; a paying workspace switches
+    plans in the portal. Webhook URL `/api/public/billing/stripe` (events: `checkout.session.completed`,
+    `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed`).
   - Paystack (NGN): `PAYSTACK_SECRET_KEY`, `PAYSTACK_PLAN_STARTER|GROWTH|AGENCY`; webhook URL `/api/public/billing/paystack`.
 
 ## Reliability, alerts and costs
