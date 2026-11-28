@@ -5,10 +5,10 @@ import "server-only";
 // with Resend when RESEND_API_KEY is set. With neither, nothing is sent and the app falls back
 // (alerts stay in the app; reset links are made by the workspace owner).
 //
-//   ZOHO_SEND_TOKEN  the agent's send mail token (Zoho: Agents > SMTP/API > API), without the
+//   ZOHO_SEND_TOKEN  the agent's send mail token (Zoho: Agents > SMTP/API > API), with or without the
 //                    "Zoho-enczapikey" prefix
-//   ZOHO_MAIL_HOST   the API host shown next to the token (default api.zeptomail.com;
-//                    e.g. api.zeptomail.eu for EU accounts)
+//   ZOHO_MAIL_HOST   the API host shown next to the token (default cpaas.zoho.com, Zoho CPaaS;
+//                    api.zeptomail.com for ZeptoMail accounts)
 //   EMAIL_FROM       "Buzzbite <hello@buzzbite.io>": an address on a domain verified with the provider
 
 const provider = (): "zoho" | "resend" | null =>
@@ -22,10 +22,19 @@ function fromAddress(): { name: string; address: string } {
   return m ? { name: m[1] || "Buzzbite", address: m[2] } : { name: "Buzzbite", address: raw.trim() };
 }
 
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** The plain-text email as simple HTML: paragraphs, line breaks and clickable links. */
+function toHtml(text: string): string {
+  const paras = text.split(/\n{2,}/).map((p) =>
+    `<p style="margin:0 0 14px">${esc(p).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#5B26CF">${u}</a>`).replace(/\n/g, "<br>")}</p>`);
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#15171C;max-width:560px">${paras.join("")}<p style="margin:24px 0 0;color:#646B78;font-size:13px">Buzzbite · Your social media. Taken care of.</p></div>`;
+}
+
 export type EmailResult = { ok: boolean; error?: string };
 
 async function sendZoho(to: string[], subject: string, text: string): Promise<EmailResult> {
-  const host = (process.env.ZOHO_MAIL_HOST || "api.zeptomail.com").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const host = (process.env.ZOHO_MAIL_HOST || "cpaas.zoho.com").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
   const token = (process.env.ZOHO_SEND_TOKEN || "").replace(/^zoho-enczapikey\s+/i, "");
   const res = await fetch(`https://${host}/v1.1/email`, {
     method: "POST",
@@ -35,6 +44,7 @@ async function sendZoho(to: string[], subject: string, text: string): Promise<Em
       to: to.map((address) => ({ email_address: { address } })),
       subject,
       textbody: text,
+      htmlbody: toHtml(text),
     }),
     signal: AbortSignal.timeout(15_000),
   });
