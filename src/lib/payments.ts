@@ -176,6 +176,10 @@ async function paystack<T>(method: "GET" | "POST", path: string, body?: unknown)
 export async function paystackCheckout(ws: Workspace, plan: PaidPlanId, email: string, origin: string): Promise<string> {
   const code = paystackPlan(plan);
   if (!paystackReady() || !code) throw new PaymentError("Naira payments aren't switched on yet.");
+  // Paystack can't switch a running subscription to another plan, and a second checkout would bill twice.
+  if (ws.billing.provider === "paystack" && ws.billing.subscriptionId && ws.plan_status !== "canceled") {
+    throw new PaymentError(`You're on ${PLANS[ws.plan]?.name ?? "a plan"} already. To change plans, cancel it in Manage billing, then choose the new plan here.`);
+  }
   const amount = (PLANS[plan].ngn ?? 0) * 100; // kobo; the plan's own amount is what's charged
   const d = await paystack<{ authorization_url: string }>("POST", "/transaction/initialize", {
     email, amount, plan: code, callback_url: `${origin}/settings?billing=paystack`, metadata: { workspace_id: ws.id, plan },
@@ -233,6 +237,12 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<void> {
     await setWorkspacePlan(ws.id, { billing: { provider: "paystack", subscriptionId: d.subscription_code, emailToken: d.email_token, currentPeriodEnd: d.next_payment_date } });
   } else if (e.event === "invoice.payment_failed") {
     await setWorkspacePlan(ws.id, { plan_status: "past_due" });
+    await notifyWorkspace(ws.id, {
+      kind: "failed", dedupe: `payment-failed:${d.invoice_code ?? d.subscription?.subscription_code ?? Date.now()}`,
+      title: "Your Buzzbite payment didn't go through",
+      body: "Update your card in Settings → Plan and billing (Manage billing). Posting stops if it can't be paid.",
+      link: "/settings#billing",
+    });
   } else if (e.event === "subscription.disable") {
     await setWorkspacePlan(ws.id, { plan_status: "canceled" });
   }
