@@ -2,13 +2,24 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { findWorkspaceByBilling, getWorkspace, setWorkspacePlan, type Workspace } from "./accounts";
 import { notifyWorkspace } from "./notify";
-import { PLANS, type PaidPlanId, type PlanStatus } from "./plans";
+import { PLANS, isComplimentary, providerForCountry, type PaidPlanId, type PlanStatus } from "./plans";
 
 // Stripe (cards, USD) and Paystack (NGN), called over their REST APIs. Each stays
 // switched off until its keys are set in the environment.
 export class PaymentError extends Error {}
 
 export const stripeReady = () => Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET && process.env.STRIPE_PRICE_STARTER);
+/**
+ * How this workspace pays: a workspace already paying keeps its provider; otherwise its country
+ * decides (Paystack in naira for Nigeria, Stripe in USD elsewhere), falling back to Stripe while
+ * Paystack isn't set up.
+ */
+export function paymentProviderFor(ws: Workspace, ipCountry?: string | null): "stripe" | "paystack" {
+  if (ws.billing.provider && ws.billing.subscriptionId && ws.plan_status !== "canceled") return ws.billing.provider;
+  const wanted = providerForCountry(ws.country ?? ipCountry);
+  return wanted === "paystack" && !paystackReady() ? "stripe" : wanted;
+}
+
 export const paystackReady = () => Boolean(process.env.PAYSTACK_SECRET_KEY && process.env.PAYSTACK_PLAN_STARTER);
 
 const stripePrice = (plan: PaidPlanId) => process.env[`STRIPE_PRICE_${plan.toUpperCase()}`];
@@ -33,7 +44,8 @@ async function stripe<T>(path: string, form: Record<string, string> | null, opts
 
 /** The workspace's Stripe customer, created once and reused for every checkout. */
 async function stripeCustomer(ws: Workspace, email: string): Promise<string> {
-  if (ws.billing.customerId) return ws.billing.customerId;
+  // The same field holds a Paystack customer code for naira workspaces; only reuse a Stripe id.
+  if (ws.billing.customerId?.startsWith("cus_")) return ws.billing.customerId;
   const c = await stripe<{ id: string }>("/customers", { email, name: ws.name, "metadata[workspace_id]": ws.id }, { idempotencyKey: `customer-${ws.id}` });
   await setWorkspacePlan(ws.id, { billing: { customerId: c.id } });
   return c.id;
@@ -107,13 +119,14 @@ export async function handleStripeEvent(e: StripeEvent): Promise<void> {
   if (e.type === "checkout.session.completed") {
     const wsId = o.metadata?.workspace_id ?? o.client_reference_id;
     const plan = o.metadata?.plan;
-    if (!wsId || !isPaidPlan(plan) || !(await getWorkspace(wsId))) return;
+    const target = wsId ? await getWorkspace(wsId) : null;
+    if (!wsId || !isPaidPlan(plan) || !target || isComplimentary(target.plan)) return;
     await setWorkspacePlan(wsId, { plan, plan_status: "active", billing: { provider: "stripe", customerId: o.customer, subscriptionId: o.subscription, cancelAtPeriodEnd: false } });
     return;
   }
   if (e.type === "customer.subscription.created" || e.type === "customer.subscription.updated" || e.type === "customer.subscription.deleted") {
     const ws = await workspaceFor(o, o.id);
-    if (!ws) return;
+    if (!ws || isComplimentary(ws.plan)) return; // complimentary workspaces are never changed by billing
     // Events can arrive out of order: never let an older one undo a newer change.
     if (e.created && ws.billing.lastEventAt && e.created < ws.billing.lastEventAt) return;
     // Another subscription than the workspace's current one (e.g. an old cancelled one): ignore.
@@ -133,7 +146,7 @@ export async function handleStripeEvent(e: StripeEvent): Promise<void> {
     const subId = o.subscription ?? o.parent?.subscription_details?.subscription;
     if (!subId) return;
     const ws = await workspaceFor(o, subId);
-    if (!ws || ws.billing.subscriptionId !== subId) return;
+    if (!ws || isComplimentary(ws.plan) || ws.billing.subscriptionId !== subId) return;
     if (e.type === "invoice.paid") {
       if (ws.plan_status === "past_due") await setWorkspacePlan(ws.id, { plan_status: "active" });
       return;
@@ -203,17 +216,19 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<void> {
   if (e.event === "charge.success") {
     const wsId = d.metadata?.workspace_id;
     const plan = d.metadata?.plan;
-    if (wsId && isPaidPlan(plan) && (await getWorkspace(wsId))) {
+    const target = wsId ? await getWorkspace(wsId) : null;
+    if (target && isComplimentary(target.plan)) return;
+    if (wsId && isPaidPlan(plan) && target) {
       await setWorkspacePlan(wsId, { plan, plan_status: "active", billing: { provider: "paystack", customerId: customer, subscriptionId: undefined, emailToken: undefined } });
     } else if (customer) {
       // A renewal: no metadata, found by customer.
       const ws = await findWorkspaceByBilling("customerId", customer);
-      if (ws) await setWorkspacePlan(ws.id, { plan_status: "active" });
+      if (ws && !isComplimentary(ws.plan)) await setWorkspacePlan(ws.id, { plan_status: "active" });
     }
     return;
   }
   const ws = (d.subscription_code && (await findWorkspaceByBilling("subscriptionId", d.subscription_code))) || (customer && (await findWorkspaceByBilling("customerId", customer)));
-  if (!ws) return;
+  if (!ws || isComplimentary(ws.plan)) return;
   if (e.event === "subscription.create") {
     await setWorkspacePlan(ws.id, { billing: { provider: "paystack", subscriptionId: d.subscription_code, emailToken: d.email_token, currentPeriodEnd: d.next_payment_date } });
   } else if (e.event === "invoice.payment_failed") {

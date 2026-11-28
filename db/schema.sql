@@ -220,3 +220,6 @@ create table if not exists notifications (
 );
 create unique index if not exists notifications_dedupe on notifications (workspace_id, dedupe) where dedupe is not null;
 create index if not exists notifications_ws_time on notifications (workspace_id, created_at desc);
+
+-- v11: the workspace's country decides how it pays (Paystack in NGN for Nigeria, Stripe in USD elsewhere).
+alter table workspaces add column if not exists country text;

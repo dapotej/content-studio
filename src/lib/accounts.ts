@@ -28,6 +28,8 @@ export type Billing = {
 };
 export type Workspace = {
   id: string; name: string; plan: PlanId; plan_status: PlanStatus; trial_ends_at: string | null; billing: Billing; created_at: string;
+  /** ISO country code: decides how the workspace pays. */
+  country: string | null;
 };
 export type Member = User & { role: "owner" | "member" };
 export type Invite = { token: string; kind: "signup" | "team"; workspace_id: string | null; email: string; expires_at: string; used_at: string | null };
@@ -36,6 +38,7 @@ const toUser = (r: Row): User => ({ id: r.id as string, email: r.email as string
 const toWorkspace = (r: Row): Workspace => ({
   id: r.id as string, name: r.name as string, plan: (r.plan as PlanId) ?? "trial", plan_status: (r.plan_status as PlanStatus) ?? "trialing",
   trial_ends_at: iso(r.trial_ends_at), billing: (r.billing as Billing) ?? {}, created_at: iso(r.created_at)!,
+  country: (r.country as string) ?? null,
 });
 
 // ---------- users ----------
@@ -72,9 +75,9 @@ export async function updateUser(id: string, patch: { name?: string; email?: str
 }
 
 // ---------- workspaces ----------
-export async function createWorkspace(name: string): Promise<Workspace> {
+export async function createWorkspace(name: string, country: string | null = null): Promise<Workspace> {
   const trialEnds = new Date(Date.now() + TRIAL_DAYS * 86400_000).toISOString();
-  const rows = await client()`insert into workspaces (name, plan, plan_status, trial_ends_at) values (${name}, 'trial', 'trialing', ${trialEnds}) returning *`;
+  const rows = await client()`insert into workspaces (name, plan, plan_status, trial_ends_at, country) values (${name}, 'trial', 'trialing', ${trialEnds}, ${country}) returning *`;
   return toWorkspace(rows[0]);
 }
 export async function getWorkspace(id: string): Promise<Workspace | null> {
@@ -84,6 +87,9 @@ export async function getWorkspace(id: string): Promise<Workspace | null> {
 export async function oldestWorkspace(): Promise<Workspace | null> {
   const rows = await client()`select * from workspaces order by created_at limit 1`;
   return rows[0] ? toWorkspace(rows[0]) : null;
+}
+export async function setWorkspaceCountry(id: string, country: string): Promise<void> {
+  await client()`update workspaces set country = ${country.toUpperCase().slice(0, 2)} where id = ${id}`;
 }
 export async function renameWorkspace(id: string, name: string): Promise<void> {
   await client()`update workspaces set name = ${name} where id = ${id}`;

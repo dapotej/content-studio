@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Wordmark } from "@/components/Logo";
+import { headers } from "next/headers";
+import { AuthShell } from "@/components/AuthShell";
+import { PasswordInput } from "@/components/PasswordInput";
+import { countries, isCountry } from "@/lib/countries";
 import { addMember, createUser, createWorkspace, findUserByEmail, getInvite, getWorkspace, useInvite, type Invite } from "@/lib/accounts";
 import { startSession } from "@/lib/security";
 import { PASSWORD_RULE, hashPassword, passwordOk, verifyPassword } from "@/lib/passwords";
@@ -40,7 +43,7 @@ async function signUp(formData: FormData) {
   if (invite?.kind === "team" && invite.workspace_id) {
     await addMember(invite.workspace_id, userId, "member");
   } else {
-    const ws = await createWorkspace(g("business") || g("name") || "My workspace");
+    const ws = await createWorkspace(g("business") || g("name") || "My workspace", isCountry(g("country")) ? g("country").toUpperCase() : null);
     await addMember(ws.id, userId, "owner");
   }
   if (invite) await useInvite(invite.token);
@@ -62,35 +65,43 @@ export default async function SignUp({ searchParams }: { searchParams: Promise<{
 
   if (!invite && !signupsOpen()) {
     return (
-      <main className="wrap" style={{ maxWidth: 440, paddingTop: "10vh", paddingInline: 16 }}>
-        <h1 style={{ margin: 0 }}><Wordmark height={34} /></h1>
-        <div className="card stack">
-          <h2 style={{ fontSize: 22 }}>{token ? "This invite link doesn't work" : "Buzzbite is invite-only for now"}</h2>
-          <p className="muted">{token ? "It has expired or was already used. Ask the person who sent it for a new one." : "We're opening to a small group first."} </p>
-          <div className="row"><a className="btn btn-ink" href="https://buzzbite.io/#waitlist">Join the waitlist</a><Link className="btn" href="/login">Sign in</Link></div>
-        </div>
-      </main>
+      <AuthShell title={token ? "This invite link doesn't work" : "Buzzbite is invite-only for now"}
+        lede={token ? "It has expired or was already used. Ask the person who sent it for a new one." : "We're opening to a small group first."}>
+        <div className="row"><a className="btn btn-ink" href="https://buzzbite.io/#waitlist">Join the waitlist</a><Link className="btn" href="/login">Sign in</Link></div>
+      </AuthShell>
     );
   }
 
+  const ipCountry = (await headers()).get("x-vercel-ip-country") ?? "";
   return (
-    <main className="wrap" style={{ maxWidth: 440, paddingTop: "8vh", paddingInline: 16, paddingBottom: 48 }}>
-      <h1 style={{ margin: 0 }}><Wordmark height={34} /></h1>
-      <p className="lede">{team ? `Join ${team.name} on Buzzbite.` : "Create your account. Your 14-day free trial starts now, no card needed."}</p>
-      <form action={signUp} className="card stack">
+    <AuthShell
+      title={team ? `Join ${team.name}` : "Start your free trial"}
+      lede={team ? "Create your account to work on this team's social media." : "Set up your brand in minutes. Your first posts are ready to approve today."}
+      footer={<>Already have an account? <Link href="/login">Sign in</Link></>}>
+      {!team && <ul className="auth-perks"><li>14 days free</li><li>No card needed</li><li>Cancel any time</li></ul>}
+      <form action={signUp}>
         <input type="hidden" name="invite" value={token} />
-        <label className="field" htmlFor="name">Your name<input id="name" name="name" type="text" autoComplete="name" required /></label>
-        {!team && <label className="field" htmlFor="business">Business name<input id="business" name="business" type="text" autoComplete="organization" /></label>}
-        <label className="field" htmlFor="email">Email
+        <div className="auth-row">
+          <label className="field" htmlFor="name">Your name<input id="name" name="name" type="text" autoComplete="name" required autoFocus /></label>
+          {!team && <label className="field" htmlFor="business">Business name<input id="business" name="business" type="text" autoComplete="organization" /></label>}
+        </div>
+        <label className="field" htmlFor="email">Work email
           <input id="email" name="email" type="email" autoComplete="email" required defaultValue={invite?.email || ""} readOnly={!!invite?.email} />
         </label>
         <label className="field" htmlFor="password">Password<span className="hint">{PASSWORD_RULE}</span>
-          <input id="password" name="password" type="password" autoComplete="new-password" minLength={10} required />
+          <PasswordInput id="password" name="password" autoComplete="new-password" minLength={10} required />
         </label>
+        {!team && (
+          <label className="field" htmlFor="country">Country<span className="hint">Sets your currency and how you pay later.</span>
+            <select id="country" name="country" defaultValue={isCountry(ipCountry) ? ipCountry.toUpperCase() : ""} required>
+              <option value="" disabled>Choose your country</option>
+              {countries().map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            </select>
+          </label>
+        )}
         {error && <p className="error" role="alert">{ERRORS[error] ?? "Something went wrong. Try again."}</p>}
         <button className="btn btn-ink" type="submit">{team ? "Join the team" : "Create my account"}</button>
       </form>
-      <p className="small muted" style={{ marginTop: 16 }}>Already have an account? <Link href="/login">Sign in</Link>.</p>
-    </main>
+    </AuthShell>
   );
 }

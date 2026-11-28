@@ -6,12 +6,13 @@ import { Wordmark } from "@/components/Logo";
 import { BillingPlans, CopyLink } from "@/components/Billing";
 import {
   createInvite, endAllSessions, findUserByEmail, getSession, getUser, listMembers, listOpenInvites, removeMember, renameWorkspace,
-  requireSession, revokeInvite, setPassword, signupInviteFor, updateUser,
+  requireSession, revokeInvite, setPassword, setWorkspaceCountry, signupInviteFor, updateUser,
 } from "@/lib/accounts";
 import { blockedReason, usageFor } from "@/lib/limits";
 import { PASSWORD_RULE, hashPassword, newToken, passwordOk, verifyPassword } from "@/lib/passwords";
-import { PAID_PLANS, PLANS, isUnlimited } from "@/lib/plans";
-import { paystackConfirm, paystackReady, stripeReady } from "@/lib/payments";
+import { PAID_PLANS, PLANS, isComplimentary, isUnlimited } from "@/lib/plans";
+import { paymentProviderFor, paystackConfirm, paystackReady, stripeReady } from "@/lib/payments";
+import { countries, countryName, isCountry } from "@/lib/countries";
 import { RESET_LINK_HOURS, createResetToken, startSession } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
@@ -74,6 +75,10 @@ async function saveWorkspace(formData: FormData) {
   if (s.role !== "owner") back("msg=owner-only#team");
   const name = String(formData.get("workspace") ?? "").trim().slice(0, 120);
   if (name) await renameWorkspace(s.workspace.id, name);
+  // The country sets how the workspace pays, so it can't change while a subscription is running.
+  const country = String(formData.get("country") ?? "");
+  const paying = !!s.workspace.billing.subscriptionId && s.workspace.plan_status !== "canceled";
+  if (isCountry(country) && country !== s.workspace.country && !paying) await setWorkspaceCountry(s.workspace.id, country);
   back("msg=saved#team");
 }
 
@@ -136,6 +141,10 @@ export default async function Settings({ searchParams }: {
   const plan = PLANS[s.workspace.plan];
   const owner = s.role === "owner";
   const internal = s.workspace.plan === "internal";
+  const complimentary = isComplimentary(s.workspace.plan);
+  const ipCountry = (await headers()).get("x-vercel-ip-country");
+  const payWith = paymentProviderFor(s.workspace, ipCountry);
+  const paying = !!s.workspace.billing.subscriptionId && s.workspace.plan_status !== "canceled" && !complimentary;
   const msg = q.msg ? MSG[q.msg] : null;
   const trialDays = s.workspace.plan === "trial" && s.workspace.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(s.workspace.trial_ends_at).getTime() - Date.now()) / 86400_000)) : null;
@@ -183,6 +192,12 @@ export default async function Settings({ searchParams }: {
         <h2>Workspace and team</h2>
         <form action={saveWorkspace} className="row" style={{ alignItems: "flex-end" }}>
           <label className="field" style={{ flex: "1 1 260px" }}>Workspace name<input name="workspace" type="text" defaultValue={s.workspace.name} disabled={!owner} /></label>
+          <label className="field" style={{ flex: "1 1 220px" }}>Country<span className="hint">{paying ? "Fixed while a plan is active." : "Sets your currency and how you pay."}</span>
+            <select name="country" defaultValue={s.workspace.country ?? ipCountry ?? ""} disabled={!owner || paying}>
+              <option value="" disabled>Choose a country</option>
+              {countries().map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            </select>
+          </label>
           {owner && <button className="btn" type="submit">Save</button>}
         </form>
         <ul className="members">
@@ -228,24 +243,25 @@ export default async function Settings({ searchParams }: {
           <div>
             <strong style={{ fontSize: 20 }}>{plan.name}</strong>
             <p className="small muted">
-              {internal ? "No limits, no billing." : s.workspace.plan === "trial" ? (trialDays ? `${trialDays} day${trialDays === 1 ? "" : "s"} left in your free trial.` : "Your free trial has ended.")
+              {complimentary ? "No limits, no billing." : s.workspace.plan === "trial" ? (trialDays ? `${trialDays} day${trialDays === 1 ? "" : "s"} left in your free trial.` : "Your free trial has ended.")
                 : s.workspace.plan_status === "active" ? (s.workspace.billing.cancelAtPeriodEnd
                   ? `Cancelled. Your plan stays active until ${s.workspace.billing.currentPeriodEnd ? new Date(s.workspace.billing.currentPeriodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "the end of this period"}.`
                   : `Active${s.workspace.billing.currentPeriodEnd ? `, renews ${new Date(s.workspace.billing.currentPeriodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}.`)
                 : s.workspace.plan_status === "past_due" ? "Payment failed. Update your payment details." : "Cancelled."}
             </p>
           </div>
-          <span className={`chip ${blocked ? "chip-wait" : "chip-ok"}`}>{blocked ? "Action needed" : internal ? "Internal" : s.workspace.plan === "trial" ? "Trial" : s.workspace.plan_status}</span>
+          <span className={`chip ${blocked ? "chip-wait" : "chip-ok"}`}>{blocked ? "Action needed" : internal ? "Internal" : complimentary ? "Complimentary" : s.workspace.plan === "trial" ? "Trial" : s.workspace.plan_status}</span>
         </div>
         <div className="meters">
           {meter("Posts this month", usage.posts, plan.posts)}
           {meter("Videos this month", usage.videos, plan.videos)}
           {meter("Brands", usage.brands, plan.brands)}
         </div>
-        {!internal && (
+        {!complimentary && (
           <BillingPlans
-            current={s.workspace.plan} status={s.workspace.plan_status} owner={owner} provider={s.workspace.billing.provider ?? null}
-            plans={PAID_PLANS.map((id) => ({ id, ...PLANS[id] }))} stripe={stripeReady()} paystack={paystackReady()}
+            current={s.workspace.plan} status={s.workspace.plan_status} owner={owner} provider={payWith}
+            plans={PAID_PLANS.map((id) => ({ id, ...PLANS[id] }))} ready={payWith === "stripe" ? stripeReady() : paystackReady()}
+            countryName={countryName(s.workspace.country ?? ipCountry)}
           />
         )}
       </section>

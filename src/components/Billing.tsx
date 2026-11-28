@@ -15,16 +15,15 @@ export function CopyLink({ label, url }: { label: string; url: string }) {
   );
 }
 
-/** Plan cards with a USD (card, Stripe) / NGN (Paystack) switch. */
-export function BillingPlans({ current, status, owner, provider, plans, stripe, paystack }: {
-  current: PlanId; status: PlanStatus; owner: boolean; provider: "stripe" | "paystack" | null;
-  plans: (Plan & { id: "starter" | "growth" | "agency" })[]; stripe: boolean; paystack: boolean;
+/** Plan cards in the workspace's currency: naira through Paystack, or US dollars by card through Stripe. */
+export function BillingPlans({ current, status, owner, provider, plans, ready, countryName }: {
+  current: PlanId; status: PlanStatus; owner: boolean; provider: "stripe" | "paystack";
+  plans: (Plan & { id: "starter" | "growth" | "agency" })[]; ready: boolean; countryName: string;
 }) {
-  const [currency, setCurrency] = useState<"usd" | "ngn">(provider === "paystack" ? "ngn" : "usd");
+  const currency = provider === "paystack" ? "ngn" : "usd";
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const paid = current !== "trial" && current !== "internal" && status !== "canceled";
-  const ready = currency === "usd" ? stripe : paystack;
+  const paid = current !== "trial" && current !== "internal" && current !== "free" && status !== "canceled";
 
   async function go(path: string, body?: unknown, key = path) {
     setBusy(key); setError("");
@@ -37,10 +36,9 @@ export function BillingPlans({ current, status, owner, provider, plans, stripe, 
   return (
     <div className="stack" style={{ gap: 14 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="seg" role="group" aria-label="Currency">
-          <button type="button" aria-pressed={currency === "usd"} onClick={() => setCurrency("usd")}>USD · card</button>
-          <button type="button" aria-pressed={currency === "ngn"} onClick={() => setCurrency("ngn")}>NGN · Paystack</button>
-        </div>
+        <span className="small muted">
+          {currency === "ngn" ? "Prices in naira, paid with Paystack (card, bank transfer or USSD)" : "Prices in US dollars, paid by card"}{countryName ? ` · ${countryName}` : ""}
+        </span>
         {paid && owner && <button className="btn" type="button" onClick={() => go("/api/billing/manage", undefined, "manage")} disabled={busy !== null}>{busy === "manage" ? "Opening…" : "Manage billing"}</button>}
       </div>
       <div className="plans">
@@ -54,7 +52,7 @@ export function BillingPlans({ current, status, owner, provider, plans, stripe, 
               <ul>{p.features.map((f) => <li key={f}>{f}</li>)}</ul>
               {!isCurrent && (
                 <button className="btn btn-ink" type="button" disabled={!owner || !ready || busy !== null}
-                  onClick={() => go("/api/billing/checkout", { plan: p.id, provider: currency === "usd" ? "stripe" : "paystack" }, p.id)}>
+                  onClick={() => go("/api/billing/checkout", { plan: p.id }, p.id)}>
                   {busy === p.id ? "Opening checkout…" : paid ? `Switch to ${p.name}` : `Choose ${p.name}`}
                 </button>
               )}
@@ -62,7 +60,7 @@ export function BillingPlans({ current, status, owner, provider, plans, stripe, 
           );
         })}
       </div>
-      {!ready && <p className="small muted">{currency === "usd" ? "Card" : "Naira"} payments aren&rsquo;t switched on yet.</p>}
+      {!ready && <p className="small muted">Payments aren&rsquo;t switched on yet.</p>}
       {!owner && <p className="small muted">Only the workspace owner can change the plan.</p>}
       {error && <p className="error" role="alert">{error}</p>}
     </div>

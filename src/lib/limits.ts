@@ -29,7 +29,7 @@ export async function usageFor(workspaceId: string): Promise<Usage> {
 /** Why this workspace can't create anything right now, or null when it can. */
 export function blockedReason(s: Session): string | null {
   const w = s.workspace;
-  if (w.plan === "internal") return null;
+  if (w.plan === "internal" || w.plan === "free") return null;
   if (w.plan === "trial") {
     if (w.trial_ends_at && new Date(w.trial_ends_at).getTime() < Date.now()) return "Your free trial has ended. Choose a plan in Settings to keep creating posts.";
     return null;

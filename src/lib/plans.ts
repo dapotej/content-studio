@@ -1,6 +1,6 @@
 // Plans and their monthly limits. Prices are shown on the billing page; the amounts
 // charged come from the Stripe prices and Paystack plans set in the environment.
-export type PlanId = "internal" | "trial" | "starter" | "growth" | "agency";
+export type PlanId = "internal" | "free" | "trial" | "starter" | "growth" | "agency";
 export type PaidPlanId = "starter" | "growth" | "agency";
 export type PlanStatus = "trialing" | "active" | "past_due" | "canceled";
 
@@ -20,6 +20,7 @@ const UNLIMITED = 1_000_000;
 
 export const PLANS: Record<PlanId, Plan> = {
   internal: { name: "Internal", usd: null, ngn: null, brands: UNLIMITED, posts: UNLIMITED, videos: UNLIMITED, blurb: "Buzzbite's own workspace.", features: [] },
+  free: { name: "Complimentary", usd: null, ngn: null, brands: UNLIMITED, posts: UNLIMITED, videos: UNLIMITED, blurb: "No limits, never billed.", features: [] },
   trial: { name: "Free trial", usd: null, ngn: null, brands: 1, posts: 12, videos: 4, blurb: "14 days to try Buzzbite with one brand.", features: [] },
   starter: {
     name: "Starter", usd: 49, ngn: 35_000, brands: 1, posts: 12, videos: 4,
@@ -41,3 +42,10 @@ export const PLANS: Record<PlanId, Plan> = {
 export const PAID_PLANS: PaidPlanId[] = ["starter", "growth", "agency"];
 export const TRIAL_DAYS = 14;
 export const isUnlimited = (n: number) => n >= UNLIMITED;
+/** Plans that are never billed: Buzzbite's own admin workspace, and complimentary workspaces. */
+export const isComplimentary = (p: PlanId) => p === "internal" || p === "free";
+
+// How a workspace pays depends on its country: Paystack (naira) where it's set up, Stripe (USD cards) elsewhere.
+export const PAYSTACK_COUNTRIES = (process.env.PAYSTACK_COUNTRIES || "NG").split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
+export const providerForCountry = (country: string | null | undefined): "stripe" | "paystack" =>
+  country && PAYSTACK_COUNTRIES.includes(country.toUpperCase()) ? "paystack" : "stripe";

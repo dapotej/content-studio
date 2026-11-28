@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Wordmark } from "@/components/Logo";
+import { AuthShell } from "@/components/AuthShell";
+import { PasswordInput } from "@/components/PasswordInput";
 import { setPassword } from "@/lib/accounts";
 import { PASSWORD_RULE, hashPassword, passwordOk } from "@/lib/passwords";
 import { resetTokenUser, useResetToken } from "@/lib/security";
@@ -24,27 +25,23 @@ async function reset(formData: FormData) {
 export default async function Reset({ searchParams }: { searchParams: Promise<{ token?: string; error?: string }> }) {
   const { token = "", error } = await searchParams;
   const valid = token ? Boolean(await resetTokenUser(token)) : false;
+  if (!valid) {
+    return (
+      <AuthShell title="This link has expired" lede="Reset links work once, for a short time." footer={<><Link href="/login">Back to sign in</Link></>}>
+        <Link className="btn btn-ink" href="/forgot">Get a new link</Link>
+      </AuthShell>
+    );
+  }
   return (
-    <main className="wrap" style={{ maxWidth: 440, paddingTop: "10vh", paddingInline: 16, paddingBottom: 48 }}>
-      <h1 style={{ margin: 0 }}><Wordmark height={34} /></h1>
-      {!valid ? (
-        <>
-          <p className="lede">This reset link has expired or was already used.</p>
-          <p className="small"><Link href="/forgot">Get a new link</Link> · <Link href="/login">Sign in</Link></p>
-        </>
-      ) : (
-        <>
-          <p className="lede">Choose a new password. You&rsquo;ll be signed out everywhere else.</p>
-          <form action={reset} className="card stack">
-            <input type="hidden" name="token" value={token} />
-            <label className="field" htmlFor="password">New password<span className="hint">{PASSWORD_RULE}</span>
-              <input id="password" name="password" type="password" autoComplete="new-password" minLength={10} required autoFocus />
-            </label>
-            {error === "short" && <p className="error" role="alert">Choose a longer password. {PASSWORD_RULE}</p>}
-            <button className="btn btn-ink" type="submit">Save new password</button>
-          </form>
-        </>
-      )}
-    </main>
+    <AuthShell title="Choose a new password" lede="You'll be signed out everywhere else.">
+      <form action={reset}>
+        <input type="hidden" name="token" value={token} />
+        <label className="field" htmlFor="password">New password<span className="hint">{PASSWORD_RULE}</span>
+          <PasswordInput id="password" name="password" autoComplete="new-password" minLength={10} required autoFocus />
+        </label>
+        {error === "short" && <p className="error" role="alert">Choose a longer password. {PASSWORD_RULE}</p>}
+        <button className="btn btn-ink" type="submit">Save new password</button>
+      </form>
+    </AuthShell>
   );
 }

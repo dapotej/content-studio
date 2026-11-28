@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Wordmark } from "@/components/Logo";
+import { AuthShell } from "@/components/AuthShell";
+import { PasswordInput } from "@/components/PasswordInput";
 import { addMember, countUsers, createUser, createWorkspace, findUserByEmail, oldestWorkspace } from "@/lib/accounts";
 import { legacyPasswordMatches } from "@/lib/auth";
 import { PASSWORD_RULE, hashPassword, passwordOk, verifyPassword } from "@/lib/passwords";
@@ -64,42 +65,42 @@ const ERRORS: Record<string, string> = {
 export default async function Login({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; reset?: string }> }) {
   const { error, next, reset } = await searchParams;
   const firstRun = (await countUsers()) === 0;
+  const err = error && <p className="error" role="alert">{ERRORS[error] ?? "Something went wrong. Try again."}</p>;
+  if (firstRun) {
+    return (
+      <AuthShell title="Set up your account" lede="You'll sign in with your email from now on, and keep all your brands and posts.">
+        <form action={claim}>
+          <label className="field" htmlFor="legacy">Current Buzzbite password<span className="hint">The shared password you use today. Needed once.</span>
+            <PasswordInput id="legacy" name="legacy" autoComplete="current-password" required />
+          </label>
+          <label className="field" htmlFor="name">Your name<input id="name" name="name" type="text" autoComplete="name" required /></label>
+          <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required /></label>
+          <label className="field" htmlFor="password">New password<span className="hint">{PASSWORD_RULE}</span>
+            <PasswordInput id="password" name="password" autoComplete="new-password" minLength={10} required />
+          </label>
+          {err}
+          <button className="btn btn-ink" type="submit">Create my account</button>
+        </form>
+      </AuthShell>
+    );
+  }
+  const open = process.env.SIGNUPS_OPEN === "true";
   return (
-    <main className="wrap" style={{ maxWidth: 440, paddingTop: "10vh", paddingInline: 16, paddingBottom: 48 }}>
-      <h1 style={{ margin: 0 }}><Wordmark height={34} /></h1>
-      {firstRun ? (
-        <>
-          <p className="lede">Set up your owner account. You&rsquo;ll sign in with your email from now on, and keep all your brands and posts.</p>
-          <form action={claim} className="card stack">
-            <label className="field" htmlFor="legacy">Current Buzzbite password<span className="hint">The shared password you use today. Needed once.</span>
-              <input id="legacy" name="legacy" type="password" autoComplete="current-password" required />
-            </label>
-            <label className="field" htmlFor="name">Your name<input id="name" name="name" type="text" autoComplete="name" required /></label>
-            <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required /></label>
-            <label className="field" htmlFor="password">New password<span className="hint">{PASSWORD_RULE}</span>
-              <input id="password" name="password" type="password" autoComplete="new-password" minLength={10} required />
-            </label>
-            {error && <p className="error" role="alert">{ERRORS[error] ?? "Something went wrong. Try again."}</p>}
-            <button className="btn btn-ink" type="submit">Create my account</button>
-          </form>
-        </>
-      ) : (
-        <>
-          <p className="lede">Your social media. Taken care of.</p>
-          <form action={signIn} className="card stack">
-            <input type="hidden" name="next" value={safeNext(next)} />
-            <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required autoFocus /></label>
-            <label className="field" htmlFor="password">Password<input id="password" name="password" type="password" autoComplete="current-password" required /></label>
-            {error && <p className="error" role="alert">{ERRORS[error] ?? "Something went wrong. Try again."}</p>}
-            <button className="btn btn-ink" type="submit">Sign in</button>
-            <Link href="/forgot" className="small" style={{ justifySelf: "start" }}>Forgot your password?</Link>
-          </form>
-          {reset && <p className="small muted" role="status" style={{ marginTop: 12 }}>Password changed. Sign in with your new password.</p>}
-          {process.env.SIGNUPS_OPEN === "true"
-            ? <p className="small muted" style={{ marginTop: 16 }}>New to Buzzbite? <Link href="/signup">Start your free 14-day trial</Link>. No card needed.</p>
-            : <p className="small muted" style={{ marginTop: 16 }}>New to Buzzbite? It&rsquo;s invite-only for now. <Link href="https://buzzbite.io/#waitlist">Join the waitlist</Link>.</p>}
-        </>
-      )}
-    </main>
+    <AuthShell title="Welcome back" lede="Sign in to see what's planned and what went out."
+      footer={open
+        ? <>New to Buzzbite? <Link href="/signup">Start your free 14-day trial</Link></>
+        : <>New to Buzzbite? It&rsquo;s invite-only for now. <Link href="https://buzzbite.io/#waitlist">Join the waitlist</Link></>}>
+      {reset && <p className="notice" role="status">Password changed. Sign in with your new password.</p>}
+      <form action={signIn}>
+        <input type="hidden" name="next" value={safeNext(next)} />
+        <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required autoFocus /></label>
+        <label className="field" htmlFor="password">
+          <span className="row" style={{ justifyContent: "space-between" }}>Password<Link href="/forgot" className="small" style={{ fontWeight: 600 }}>Forgot it?</Link></span>
+          <PasswordInput id="password" name="password" autoComplete="current-password" required />
+        </label>
+        {err}
+        <button className="btn btn-ink" type="submit">Sign in</button>
+      </form>
+    </AuthShell>
   );
 }

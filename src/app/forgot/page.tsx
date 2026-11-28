@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Wordmark } from "@/components/Logo";
+import { AuthShell } from "@/components/AuthShell";
 import { findUserByEmail } from "@/lib/accounts";
 import { appUrl } from "@/lib/alerts";
 import { emailConfigured, sendEmail } from "@/lib/email";
@@ -30,24 +30,20 @@ async function requestReset(formData: FormData) {
 
 export default async function Forgot({ searchParams }: { searchParams: Promise<{ sent?: string; error?: string }> }) {
   const { sent, error } = await searchParams;
+  const back = <><Link href="/login">Back to sign in</Link></>;
+  if (!emailConfigured()) {
+    return <AuthShell title="Reset your password" lede="Ask the owner of your workspace for a reset link. They can make one in Settings, under Team." footer={back}>{null}</AuthShell>;
+  }
+  if (sent) {
+    return <AuthShell title="Check your email" lede={`If that email has a Buzzbite account, a reset link is on its way. It works once, for ${RESET_LINK_HOURS} hours.`} footer={back}>{null}</AuthShell>;
+  }
   return (
-    <main className="wrap" style={{ maxWidth: 440, paddingTop: "10vh", paddingInline: 16, paddingBottom: 48 }}>
-      <h1 style={{ margin: 0 }}><Wordmark height={34} /></h1>
-      {!emailConfigured() ? (
-        <p className="lede">Ask the owner of your workspace for a reset link. They can make one in Settings, under Team.</p>
-      ) : sent ? (
-        <p className="lede" role="status">If that email has a Buzzbite account, a reset link is on its way. It works for {RESET_LINK_HOURS} hours.</p>
-      ) : (
-        <>
-          <p className="lede">Enter your email and we&rsquo;ll send you a link to choose a new password.</p>
-          <form action={requestReset} className="card stack">
-            <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required autoFocus /></label>
-            {error && <p className="error" role="alert">Enter a valid email address.</p>}
-            <button className="btn btn-ink" type="submit">Send reset link</button>
-          </form>
-        </>
-      )}
-      <p className="small muted" style={{ marginTop: 16 }}><Link href="/login">Back to sign in</Link></p>
-    </main>
+    <AuthShell title="Reset your password" lede="Enter your email and we'll send you a link to choose a new password." footer={back}>
+      <form action={requestReset}>
+        <label className="field" htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" required autoFocus /></label>
+        {error && <p className="error" role="alert">Enter a valid email address.</p>}
+        <button className="btn btn-ink" type="submit">Send reset link</button>
+      </form>
+    </AuthShell>
   );
 }
