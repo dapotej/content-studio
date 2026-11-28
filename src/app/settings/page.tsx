@@ -229,7 +229,9 @@ export default async function Settings({ searchParams }: {
             <strong style={{ fontSize: 20 }}>{plan.name}</strong>
             <p className="small muted">
               {internal ? "No limits, no billing." : s.workspace.plan === "trial" ? (trialDays ? `${trialDays} day${trialDays === 1 ? "" : "s"} left in your free trial.` : "Your free trial has ended.")
-                : s.workspace.plan_status === "active" ? `Active${s.workspace.billing.currentPeriodEnd ? `, renews ${new Date(s.workspace.billing.currentPeriodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}.`
+                : s.workspace.plan_status === "active" ? (s.workspace.billing.cancelAtPeriodEnd
+                  ? `Cancelled. Your plan stays active until ${s.workspace.billing.currentPeriodEnd ? new Date(s.workspace.billing.currentPeriodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "the end of this period"}.`
+                  : `Active${s.workspace.billing.currentPeriodEnd ? `, renews ${new Date(s.workspace.billing.currentPeriodEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}.`)
                 : s.workspace.plan_status === "past_due" ? "Payment failed. Update your payment details." : "Cancelled."}
             </p>
           </div>

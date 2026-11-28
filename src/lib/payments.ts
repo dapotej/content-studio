@@ -1,6 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { findWorkspaceByBilling, getWorkspace, setWorkspacePlan, type Workspace } from "./accounts";
+import { notifyWorkspace } from "./notify";
 import { PLANS, type PaidPlanId, type PlanStatus } from "./plans";
 
 // Stripe (cards, USD) and Paystack (NGN), called over their REST APIs. Each stays
@@ -17,36 +18,57 @@ const planFromStripePrice = (price: string | undefined): PaidPlanId | null =>
 const isPaidPlan = (p: unknown): p is PaidPlanId => p === "starter" || p === "growth" || p === "agency";
 
 // ---------- Stripe ----------
-async function stripe<T>(path: string, form: Record<string, string>): Promise<T> {
-  const res = await fetch(`https://api.stripe.com/v1${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(form).toString(),
-  });
+// Hosted Checkout (subscription mode) to subscribe, the Customer Portal to switch plans, update
+// the card or cancel, and webhooks to keep the workspace in step. One Stripe customer and at
+// most one subscription per workspace.
+async function stripe<T>(path: string, form: Record<string, string> | null, opts: { idempotencyKey?: string } = {}): Promise<T> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` };
+  if (form) headers["Content-Type"] = "application/x-www-form-urlencoded";
+  if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
+  const res = await fetch(`https://api.stripe.com/v1${path}`, { method: form ? "POST" : "GET", headers, body: form ? new URLSearchParams(form).toString() : undefined });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new PaymentError(data?.error?.message ?? `Stripe error (${res.status}).`);
   return data as T;
 }
 
+/** The workspace's Stripe customer, created once and reused for every checkout. */
+async function stripeCustomer(ws: Workspace, email: string): Promise<string> {
+  if (ws.billing.customerId) return ws.billing.customerId;
+  const c = await stripe<{ id: string }>("/customers", { email, name: ws.name, "metadata[workspace_id]": ws.id }, { idempotencyKey: `customer-${ws.id}` });
+  await setWorkspacePlan(ws.id, { billing: { customerId: c.id } });
+  return c.id;
+}
+
+/** True when the workspace already pays by card: plan changes then go through the portal. */
+const hasStripeSubscription = (ws: Workspace) => ws.billing.provider === "stripe" && !!ws.billing.subscriptionId && ws.plan_status !== "canceled";
+
 export async function stripeCheckout(ws: Workspace, plan: PaidPlanId, email: string, origin: string): Promise<string> {
   const price = stripePrice(plan);
   if (!stripeReady() || !price) throw new PaymentError("Card payments aren't switched on yet.");
+  // Already subscribed: switch plans in the portal instead of starting a second subscription.
+  if (hasStripeSubscription(ws)) return stripePortal(ws, origin, true);
+  const customer = await stripeCustomer(ws, email);
   const form: Record<string, string> = {
     mode: "subscription",
+    customer,
     "line_items[0][price]": price, "line_items[0][quantity]": "1",
     success_url: `${origin}/settings?billing=success#billing`, cancel_url: `${origin}/settings#billing`,
     client_reference_id: ws.id, "metadata[workspace_id]": ws.id, "metadata[plan]": plan,
     "subscription_data[metadata][workspace_id]": ws.id, "subscription_data[metadata][plan]": plan,
+    "subscription_data[billing_mode][type]": "flexible",
     allow_promotion_codes: "true",
+    "customer_update[name]": "auto", "customer_update[address]": "auto",
   };
-  if (ws.billing.provider === "stripe" && ws.billing.customerId) form.customer = ws.billing.customerId;
-  else form.customer_email = email;
   return (await stripe<{ url: string }>("/checkout/sessions", form)).url;
 }
 
-export async function stripePortal(ws: Workspace, origin: string): Promise<string> {
+export async function stripePortal(ws: Workspace, origin: string, toPlans = false): Promise<string> {
   if (!ws.billing.customerId) throw new PaymentError("No card subscription to manage.");
-  return (await stripe<{ url: string }>("/billing_portal/sessions", { customer: ws.billing.customerId, return_url: `${origin}/settings#billing` })).url;
+  const form: Record<string, string> = { customer: ws.billing.customerId, return_url: `${origin}/settings#billing` };
+  if (process.env.STRIPE_PORTAL_CONFIG) form.configuration = process.env.STRIPE_PORTAL_CONFIG;
+  // Straight to "change plan" when the owner picked another plan in Buzzbite.
+  if (toPlans && ws.billing.subscriptionId) Object.assign(form, { "flow_data[type]": "subscription_update", "flow_data[subscription_update][subscription]": ws.billing.subscriptionId });
+  return (await stripe<{ url: string }>("/billing_portal/sessions", form)).url;
 }
 
 /** Checks the Stripe-Signature header (t=…,v1=…) against the raw body. */
@@ -65,7 +87,20 @@ export function verifyStripeSignature(raw: string, header: string | null): boole
 
 const stripeStatus = (s: string): PlanStatus => (s === "active" || s === "trialing" ? "active" : s === "past_due" || s === "unpaid" ? "past_due" : "canceled");
 
-type StripeEvent = { type: string; data: { object: Record<string, any> } };
+type StripeEvent = { id?: string; type: string; created?: number; data: { object: Record<string, any> } };
+
+/** Newer API versions keep the period end on the subscription item; older ones on the subscription. */
+function periodEnd(sub: Record<string, any>): string | undefined {
+  const t = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+  return t ? new Date(t * 1000).toISOString() : undefined;
+}
+
+async function workspaceFor(o: Record<string, any>, subscriptionId?: string): Promise<Workspace | null> {
+  const wsId = o.metadata?.workspace_id ?? o.subscription_details?.metadata?.workspace_id ?? o.parent?.subscription_details?.metadata?.workspace_id;
+  return (wsId && (await getWorkspace(wsId)))
+    || (subscriptionId ? await findWorkspaceByBilling("subscriptionId", subscriptionId) : null)
+    || (o.customer ? await findWorkspaceByBilling("customerId", o.customer) : null);
+}
 
 export async function handleStripeEvent(e: StripeEvent): Promise<void> {
   const o = e.data.object;
@@ -73,17 +108,42 @@ export async function handleStripeEvent(e: StripeEvent): Promise<void> {
     const wsId = o.metadata?.workspace_id ?? o.client_reference_id;
     const plan = o.metadata?.plan;
     if (!wsId || !isPaidPlan(plan) || !(await getWorkspace(wsId))) return;
-    await setWorkspacePlan(wsId, { plan, plan_status: "active", billing: { provider: "stripe", customerId: o.customer, subscriptionId: o.subscription } });
+    await setWorkspacePlan(wsId, { plan, plan_status: "active", billing: { provider: "stripe", customerId: o.customer, subscriptionId: o.subscription, cancelAtPeriodEnd: false } });
     return;
   }
-  if (e.type === "customer.subscription.updated" || e.type === "customer.subscription.deleted") {
-    const ws = (o.metadata?.workspace_id && (await getWorkspace(o.metadata.workspace_id))) || (await findWorkspaceByBilling("subscriptionId", o.id));
+  if (e.type === "customer.subscription.created" || e.type === "customer.subscription.updated" || e.type === "customer.subscription.deleted") {
+    const ws = await workspaceFor(o, o.id);
     if (!ws) return;
+    // Events can arrive out of order: never let an older one undo a newer change.
+    if (e.created && ws.billing.lastEventAt && e.created < ws.billing.lastEventAt) return;
+    // Another subscription than the workspace's current one (e.g. an old cancelled one): ignore.
+    if (ws.billing.subscriptionId && ws.billing.subscriptionId !== o.id && e.type === "customer.subscription.deleted") return;
     const plan = planFromStripePrice(o.items?.data?.[0]?.price?.id) ?? (isPaidPlan(o.metadata?.plan) ? o.metadata.plan : null);
     await setWorkspacePlan(ws.id, {
       ...(plan ? { plan } : {}),
       plan_status: e.type === "customer.subscription.deleted" ? "canceled" : stripeStatus(o.status),
-      billing: { provider: "stripe", subscriptionId: o.id, customerId: o.customer, currentPeriodEnd: o.current_period_end ? new Date(o.current_period_end * 1000).toISOString() : undefined },
+      billing: {
+        provider: "stripe", subscriptionId: o.id, customerId: o.customer, currentPeriodEnd: periodEnd(o),
+        cancelAtPeriodEnd: Boolean(o.cancel_at_period_end || o.cancel_at), ...(e.created ? { lastEventAt: e.created } : {}),
+      },
+    });
+    return;
+  }
+  if (e.type === "invoice.paid" || e.type === "invoice.payment_failed") {
+    const subId = o.subscription ?? o.parent?.subscription_details?.subscription;
+    if (!subId) return;
+    const ws = await workspaceFor(o, subId);
+    if (!ws || ws.billing.subscriptionId !== subId) return;
+    if (e.type === "invoice.paid") {
+      if (ws.plan_status === "past_due") await setWorkspacePlan(ws.id, { plan_status: "active" });
+      return;
+    }
+    await setWorkspacePlan(ws.id, { plan_status: "past_due" });
+    await notifyWorkspace(ws.id, {
+      kind: "failed", dedupe: `payment-failed:${o.id}`,
+      title: "Your Buzzbite payment didn't go through",
+      body: "Update your card in Settings → Plan and billing. Stripe will try again over the next few days; posting stops if it can't be paid.",
+      link: "/settings#billing",
     });
   }
 }

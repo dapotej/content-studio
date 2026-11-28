@@ -30,6 +30,23 @@ export async function notify(brandId: string, n: { postId?: string | null; kind:
   }
 }
 
+/** A notification about the workspace itself (billing), emailed to its members straight away. */
+export async function notifyWorkspace(workspaceId: string, n: { kind: NoteKind; title: string; body?: string; link?: string; dedupe?: string }): Promise<void> {
+  try {
+    const rows = await client()`
+      insert into notifications (workspace_id, kind, title, body, link, dedupe)
+      values (${workspaceId}, ${n.kind}, ${n.title.slice(0, 200)}, ${(n.body ?? "").slice(0, 600)}, ${n.link ?? ""}, ${n.dedupe ?? null})
+      on conflict (workspace_id, dedupe) where dedupe is not null do nothing returning id`;
+    if (!rows.length) return; // already told
+    const to = (await client()`select u.email from workspace_members m join users u on u.id = m.user_id where m.workspace_id = ${workspaceId}`).map((r) => r.email as string);
+    if (to.length && (await sendEmail(to, n.title, `${n.body ?? ""}\n\n${appUrl()}${n.link ?? ""}`))) {
+      await client()`update notifications set emailed_at = now() where id = ${rows[0].id as string}`;
+    }
+  } catch (e) {
+    console.error("could not notify workspace", e);
+  }
+}
+
 export async function listNotes(workspaceId: string, limit = 60): Promise<Note[]> {
   const rows = await client()`
     select n.*, b.name as brand_name from notifications n left join brands b on b.id = n.brand_id

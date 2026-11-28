@@ -23,6 +23,8 @@ export type Billing = {
   subscriptionId?: string;      // Stripe subscription or Paystack subscription code
   emailToken?: string;          // Paystack, to manage the subscription
   currentPeriodEnd?: string;
+  cancelAtPeriodEnd?: boolean;  // Stripe: cancelled, still active until currentPeriodEnd
+  lastEventAt?: number;         // Stripe: created time of the newest event applied, so older ones are ignored
 };
 export type Workspace = {
   id: string; name: string; plan: PlanId; plan_status: PlanStatus; trial_ends_at: string | null; billing: Billing; created_at: string;

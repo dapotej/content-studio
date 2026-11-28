@@ -95,7 +95,9 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
             <Link href="/forgot" className="small" style={{ justifySelf: "start" }}>Forgot your password?</Link>
           </form>
           {reset && <p className="small muted" role="status" style={{ marginTop: 12 }}>Password changed. Sign in with your new password.</p>}
-          <p className="small muted" style={{ marginTop: 16 }}>New to Buzzbite? It&rsquo;s invite-only for now. <Link href="https://buzzbite.io/#waitlist">Join the waitlist</Link>.</p>
+          {process.env.SIGNUPS_OPEN === "true"
+            ? <p className="small muted" style={{ marginTop: 16 }}>New to Buzzbite? <Link href="/signup">Start your free 14-day trial</Link>. No card needed.</p>
+            : <p className="small muted" style={{ marginTop: 16 }}>New to Buzzbite? It&rsquo;s invite-only for now. <Link href="https://buzzbite.io/#waitlist">Join the waitlist</Link>.</p>}
         </>
       )}
     </main>
