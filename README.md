@@ -63,7 +63,7 @@ connected accounts and publishes at the scheduled time (so the app needs no sche
   published or fails; connect it once from System health. A daily Vercel cron (`/api/public/cron`, needs `CRON_SECRET`)
   picks up anything a webhook missed and gives up on jobs that never finished (`src/lib/system.ts`).
 - **Alerts** (`src/lib/alerts.ts`): failed photos and videos, scheduling problems and failed posts appear on the calendar
-  until fixed; failed posts are also emailed to the workspace when `RESEND_API_KEY` is set.
+  until fixed; failed posts are also emailed to the workspace when email is set up (see `src/lib/email.ts`).
 - **Costs** (`src/lib/usage.ts`): every Claude response records its tokens at list price; every finished fal.ai job
   records an estimated price per model. System health (internal only) shows this month's cost per workspace against its
   plan price, and the most expensive posts.
@@ -108,7 +108,7 @@ npm run db:migrate           # creates the tables (safe to re-run)
 npm run dev
 ```
 
-Environment variables: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `APP_PASSWORD`, `AUTH_SECRET`, `BLOB_READ_WRITE_TOKEN`, `FAL_KEY`, `ZERNIO_API_KEY` for auto-posting, `CRON_SECRET` for the daily check, `RESEND_API_KEY` for email, and optionally `FAL_REFERENCE_MODEL` (default `openai/gpt-image-2/edit`, used for photos that show the brand's product) (see `.env.example`).
+Environment variables: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `APP_PASSWORD`, `AUTH_SECRET`, `BLOB_READ_WRITE_TOKEN`, `FAL_KEY`, `ZERNIO_API_KEY` for auto-posting, `CRON_SECRET` for the daily check, `ZOHO_SEND_TOKEN` + `EMAIL_FROM` for email (Zoho CPaaS/ZeptoMail; `RESEND_API_KEY` also works), and optionally `FAL_REFERENCE_MODEL` (default `openai/gpt-image-2/edit`, used for photos that show the brand's product) (see `.env.example`).
 
 ## Roadmap to a product
 

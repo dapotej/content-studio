@@ -7,6 +7,7 @@ import { health } from "@/lib/system";
 import { costliestPosts, costsThisMonth } from "@/lib/usage";
 import { postingConfigured } from "@/lib/zernio";
 import { ConnectWebhooks } from "./ConnectWebhooks";
+import { TestEmail } from "./TestEmail";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "System health · Buzzbite" };
@@ -23,7 +24,7 @@ export default async function HealthPage() {
     ["Photos and video finish with no tab open", process.env.VERCEL_ENV === "production", "fal.ai calls the app back when a job finishes (production only)."],
     ["Daily safety check", Boolean(process.env.CRON_SECRET), "Set CRON_SECRET in Vercel. Vercel then runs the check every morning."],
     ["Auto-posting", postingConfigured(), "Set ZERNIO_API_KEY in Vercel."],
-    ["Alert emails", emailConfigured(), "Set RESEND_API_KEY (and EMAIL_FROM) in Vercel to email owners when a post fails."],
+    ["Email (digests, failed posts, password resets)", emailConfigured(), "Set ZOHO_SEND_TOKEN and EMAIL_FROM in Vercel (or RESEND_API_KEY)."],
   ];
   return (
     <main className="wrap stack" style={{ paddingTop: 32, paddingBottom: 48 }}>
@@ -41,6 +42,7 @@ export default async function HealthPage() {
           ))}
         </ul>
         {postingConfigured() && <ConnectWebhooks />}
+        {emailConfigured() && <TestEmail />}
       </section>
 
       <section className="card stack" style={{ overflowX: "auto" }}>
