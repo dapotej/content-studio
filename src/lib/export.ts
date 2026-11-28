@@ -23,6 +23,39 @@ const opts = (fontEmbedCSS: string) => ({
   filter: (n: HTMLElement) => n.tagName !== "VIDEO",
 });
 
+/** Photos live on Vercel Blob; fetch them through the app's own image route so the browser never blocks them. */
+function sameOrigin(src: string): string {
+  if (/^https:\/\/[^/]+\.public\.blob\.vercel-storage\.com\//.test(src)) return `/_next/image?url=${encodeURIComponent(src)}&w=1080&q=90`;
+  return src;
+}
+
+/**
+ * Puts every photo into the post as data, before capture. html-to-image otherwise fetches each
+ * photo again on its own, and when that fetch fails it quietly leaves the photo out: the post
+ * went out as text on a blank background. Throws instead, so a post never goes out without its photo.
+ */
+async function inlineImages(node: HTMLElement): Promise<() => void> {
+  const undo: (() => void)[] = [];
+  for (const img of Array.from(node.querySelectorAll("img"))) {
+    const src = img.getAttribute("src") || "";
+    if (!src || src.startsWith("data:")) continue;
+    let data: string;
+    try {
+      const res = await fetch(sameOrigin(src), { cache: "force-cache" });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      data = await new Promise<string>((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result)); fr.onerror = () => reject(fr.error); fr.readAsDataURL(blob); });
+    } catch {
+      throw new Error("A photo in this post could not be loaded, so its files weren't made. Check your connection and try again.");
+    }
+    img.removeAttribute("srcset");
+    img.src = data;
+    await img.decode().catch(() => { throw new Error("A photo in this post could not be read. Try again, or give the post a new photo."); });
+    undo.push(() => { img.src = src; });
+  }
+  return () => undo.forEach((u) => u());
+}
+
 function seek(video: HTMLVideoElement, seconds: number): Promise<void> {
   return new Promise((resolve) => {
     if (Math.abs(video.currentTime - seconds) < 0.001) return resolve();
@@ -78,6 +111,7 @@ export async function videoSeconds(node: HTMLElement): Promise<number> {
 export async function exportPng(node: HTMLElement, format: "png" | "jpeg" = "png"): Promise<Blob> {
   await document.fonts.ready;
   const css = await getFontEmbedCSS(node);
+  const restoreImages = await inlineImages(node);
   const restore = await freezeVideos(node);
   try {
     // Instagram only accepts JPEG photos.
@@ -85,6 +119,7 @@ export async function exportPng(node: HTMLElement, format: "png" | "jpeg" = "png
     return (await fetch(url)).blob();
   } finally {
     restore();
+    restoreImages();
     node.querySelectorAll("video").forEach((v) => void v.play().catch(() => undefined));
   }
 }
@@ -117,6 +152,7 @@ export async function exportMp4(node: HTMLElement, onProgress: (fraction: number
   if (!picked) throw new Error("This browser cannot encode video. Use a recent Chrome, Edge or Safari.");
   await document.fonts.ready;
   const fontCss = await getFontEmbedCSS(node);
+  const restoreImages = await inlineImages(node);
   const fps = 30;
   const frames = (await videoSeconds(node)) * fps;
 
@@ -156,6 +192,7 @@ export async function exportMp4(node: HTMLElement, onProgress: (fraction: number
     muxer.finalize();
   } finally {
     if (encoder.state !== "closed") encoder.close();
+    restoreImages();
     for (const a of anims) {
       a.currentTime = 0;
       a.play();

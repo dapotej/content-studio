@@ -4,6 +4,7 @@ import { inkOn } from "@/templates/PostCanvas";
 import type { Brand } from "@/lib/types";
 import { getSession } from "@/lib/accounts";
 import { blockedReason } from "@/lib/limits";
+import { unreadCount } from "@/lib/notify";
 
 type Section = "calendar" | "review" | "results" | "trends" | "media" | "kit";
 
@@ -28,6 +29,7 @@ export async function Shell({ brand, brands, current, reviewCount, children }: {
 }) {
   const session = await getSession();
   const internal = session?.workspace.plan === "internal";
+  const unread = session ? await unreadCount(session.workspace.id).catch(() => 0) : 0;
   const blocked = session ? blockedReason(session) : null;
   const trialDays = session?.workspace.plan === "trial" && session.workspace.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(session.workspace.trial_ends_at).getTime() - Date.now()) / 86400_000)) : null;
@@ -42,7 +44,13 @@ export async function Shell({ brand, brands, current, reviewCount, children }: {
   return (
     <div className="app">
       <aside className="side" aria-label="Buzzbite">
-        <Link href="/" className="logo"><Wordmark height={22} /></Link>
+        <div className="side-head">
+          <Link href="/" className="logo"><Wordmark height={22} /></Link>
+          <Link href="/notifications" className="bell" aria-label={unread ? `Notifications, ${unread} new` : "Notifications"}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+            {unread > 0 && <span className="bell-count">{unread > 9 ? "9+" : unread}</span>}
+          </Link>
+        </div>
         <details className="brand-pick">
           <summary><BrandDot brand={brand} /><span>{brand.name}<small>LinkedIn · Instagram</small></span></summary>
           <div className="menu">

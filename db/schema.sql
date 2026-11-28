@@ -202,3 +202,21 @@ create table if not exists brand_analytics (
   access boolean,                     -- false when the Zernio analytics add-on is off
   error text
 );
+
+-- v10: notifications: what happened (posted, failed, ready to review, nothing approved for tomorrow).
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references workspaces(id) on delete cascade,
+  brand_id uuid references brands(id) on delete cascade,
+  post_id uuid references posts(id) on delete set null,
+  kind text not null,                 -- posted | failed | review | gap
+  title text not null,
+  body text not null default '',
+  link text not null default '',
+  dedupe text,                        -- one notification per key, e.g. gap:<brand>:<date>
+  created_at timestamptz not null default now(),
+  read_at timestamptz,
+  emailed_at timestamptz
+);
+create unique index if not exists notifications_dedupe on notifications (workspace_id, dedupe) where dedupe is not null;
+create index if not exists notifications_ws_time on notifications (workspace_id, created_at desc);

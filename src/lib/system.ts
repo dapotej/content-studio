@@ -5,6 +5,7 @@ import { signValue } from "./auth";
 import { getBrand, getPost } from "./db";
 import { advance } from "./pipeline";
 import { syncBrand, syncPost } from "./publish";
+import { sendDigests, notify } from "./notify";
 import { syncResults } from "./results";
 
 // Work that runs with no one signed in: fal and Zernio webhooks, and the daily check.
@@ -68,6 +69,25 @@ export async function dailyCheck(): Promise<{ brands: number; pending: number; s
       console.error("daily check failed for brand", o.brand_id, e);
     }
   }
+  // Tomorrow is a posting day with nothing approved: say so while there's still time.
+  const brands = (await client()`select id, name, settings, social from brands where jsonb_array_length(coalesce(social->'accounts', '[]'::jsonb)) > 0`) as { id: string; name: string; settings: { days?: number[]; tz?: string }; social: unknown }[];
+  for (const b of brands) {
+    const tz = b.settings.tz || "Africa/Lagos";
+    const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString("sv-SE", { timeZone: tz });
+    const weekday = (new Date(tomorrow + "T00:00:00Z").getUTCDay() + 6) % 7;
+    if (!(b.settings.days ?? [0, 2, 4]).includes(weekday)) continue;
+    const posts = (await client()`select status from posts where brand_id = ${b.id} and publish_on = ${tomorrow}`) as { status: string }[];
+    if (posts.some((p) => p.status === "approved" || p.status === "posted")) continue;
+    const waiting = posts.some((p) => p.status === "review" || p.status === "making");
+    await notify(b.id, {
+      kind: "gap", dedupe: `gap:${b.id}:${tomorrow}`,
+      title: waiting ? "Tomorrow's post is waiting for your approval" : "Nothing planned for tomorrow",
+      body: waiting ? "Approve it today so it goes out on time." : "Tomorrow is a posting day with no post. Create one, or fill the calendar.",
+      link: waiting ? `/b/${b.id}/review` : `/b/${b.id}`,
+    });
+  }
+  await sendDigests();
+
   // Results: read the latest numbers for every brand with connected accounts.
   const social = (await client()`select id as brand_id, workspace_id from brands where social->>'profileId' is not null`) as Owner[];
   for (const o of social) {

@@ -5,6 +5,7 @@ import {
 } from "./db";
 import { checkJob, describeFalError, queueImage, queueReferenceImage, queueVideo } from "./media";
 import { advanceReelMedia, startReelMedia } from "./reels";
+import { notify } from "./notify";
 import { performanceNotes } from "./results";
 import { TEMPLATES, type Brand, type Post, type PostSpec } from "./types";
 
@@ -40,6 +41,7 @@ export async function fillDates(brand: Brand, from: string, to: string, limit = 
     results: await performanceNotes(brand.id),
   });
   for (const d of drafts) await savePost(brand, d, d.date);
+  if (drafts.length) await notify(brand.id, { kind: "review", title: `${drafts.length} new post${drafts.length === 1 ? "" : "s"} to review`, body: `Planned for ${drafts.map((d) => d.date).sort()[0]} onwards. Photos and videos are being made now.`, link: `/b/${brand.id}/review` });
   return { made: drafts.length, remaining: Math.max(0, empty.length - drafts.length) };
 }
 

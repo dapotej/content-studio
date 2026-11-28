@@ -1,5 +1,6 @@
 import "server-only";
 import { getBrand, listPostsInFlight, setPublishing, updatePost } from "./db";
+import { notify } from "./notify";
 import { PLATFORMS, designKey, type Brand, type Platform, type Post } from "./types";
 import { PostingError, createPost, deletePost, getPost, postingConfigured, type ZTarget } from "./zernio";
 
@@ -88,6 +89,13 @@ export async function syncPost(post: Post): Promise<Post> {
     const r = await getPost(id);
     let next = (await setPublishing(post.id, { state: r.state, urls: r.urls, error: r.error })) ?? post;
     if ((r.state === "published" || r.state === "partial") && post.status !== "posted") next = (await updatePost(post.id, { status: "posted" })) ?? next;
+    if (r.state !== post.publishing.state) {
+      const where = Object.keys(r.urls).map((p) => (p === "linkedin" ? "LinkedIn" : "Instagram")).join(" and ");
+      const link = `/b/${post.brand_id}/review?post=${post.id}`;
+      if (r.state === "published") await notify(post.brand_id, { postId: post.id, kind: "posted", title: `Posted: ${post.title}`, body: where ? `Live on ${where}.` : "", link: Object.values(r.urls)[0] ?? link, dedupe: `posted:${post.id}` });
+      else if (r.state === "partial") await notify(post.brand_id, { postId: post.id, kind: "failed", title: `Only partly posted: ${post.title}`, body: r.error ?? "", link, dedupe: `partial:${post.id}` });
+      else if (r.state === "failed") await notify(post.brand_id, { postId: post.id, kind: "failed", title: `Didn't go out: ${post.title}`, body: r.error ?? "", link, dedupe: `failed:${post.id}:${post.publishing.zernioId}` });
+    }
     return next;
   } catch {
     return post;
